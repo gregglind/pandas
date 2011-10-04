@@ -78,6 +78,20 @@ class Index(np.ndarray):
     def is_monotonic(self):
         return lib.is_monotonic_object(self)
 
+    @cache_readonly
+    def min(self):
+        if self.is_monotonic:
+            return self[0]
+        else:
+            return self.values.min()
+
+    @cache_readonly
+    def max(self):
+        if self.is_monotonic:
+            return self[-1]
+        else:
+            return self.values.max()
+
     _indexMap = None
     @property
     def indexMap(self):
@@ -542,6 +556,20 @@ class Index(np.ndarray):
 
 
 class Int64Index(Index):
+    """
+
+    """
+
+    # _pad = lib.pad_int64
+    # _backfill = lib.backfill_int64
+    # _merge_indexer = lib.merge_indexer_int64
+    # _left_join = lib.left_join_indexer_int64
+    # _inner_join = lib.inner_join_indexer_int64
+    # _outer_join = lib.outer_join_indexer_int64
+    # _is_monotonic = lib.is_monotonic_int64
+    # _groupby = lib.groupby_int64
+    # _arrmap = lib.arrmap_int64
+    # _map_indices = lib.map_indices_int64
 
     def __new__(cls, data, dtype=None, copy=False):
         if not isinstance(data, np.ndarray):
@@ -577,13 +605,13 @@ class Int64Index(Index):
 
     @cache_readonly
     def is_monotonic(self):
-        return lib.is_monotonic_int64(self)
+        return lib.is_monotonic_int64(_as_int64(self))
 
     @property
     def indexMap(self):
         "{label -> location}"
         if self._indexMap is None:
-            self._indexMap = lib.map_indices_int64(self)
+            self._indexMap = lib.map_indices_int64(_as_int64(self))
             self._verify_integrity()
 
         return self._indexMap
@@ -601,9 +629,6 @@ class Int64Index(Index):
         if self is other:
             return True
 
-        # if not isinstance(other, Int64Index):
-        #     return False
-
         return np.array_equal(self, other)
 
     def get_indexer(self, target, method=None):
@@ -617,13 +642,13 @@ class Int64Index(Index):
         method = self._get_method(method)
 
         if method == 'pad':
-            indexer = lib.pad_int64(self, target, self.indexMap,
-                                    target.indexMap)
+            indexer = lib.pad_int64(_as_int64(self), _as_int64(target),
+                                    self.indexMap, target.indexMap)
         elif method == 'backfill':
-            indexer = lib.backfill_int64(self, target, self.indexMap,
-                                         target.indexMap)
+            indexer = lib.backfill_int64(_as_int64(self), _as_int64(target),
+                                         self.indexMap, target.indexMap)
         elif method is None:
-            indexer = lib.merge_indexer_int64(target, self.indexMap)
+            indexer = lib.merge_indexer_int64(_as_int64(target), self.indexMap)
         else:  # pragma: no cover
             raise ValueError('unrecognized method: %s' % method)
         return indexer
@@ -642,19 +667,24 @@ class Int64Index(Index):
                               return_indexers=return_indexers)
 
     def _join_monotonic(self, other, how='left', return_indexers=False):
+        this_int64 = _as_int64(self)
+        other_int64 = _as_int64(other)
+
         if how == 'left':
             join_index = self
             lidx = None
-            ridx = lib.left_join_indexer_int64(self, other)
+            ridx = lib.left_join_indexer_int64(this_int64, other_int64)
         elif how == 'right':
             join_index = other
-            lidx = lib.left_join_indexer_int64(other, self)
+            lidx = lib.left_join_indexer_int64(other_int64, this_int64)
             ridx = None
         elif how == 'inner':
-            join_index, lidx, ridx = lib.inner_join_indexer_int64(self, other)
+            join_index, lidx, ridx = lib.inner_join_indexer_int64(this_int64,
+                                                                  other_int64)
             join_index = Int64Index(join_index)
         elif how == 'outer':
-            join_index, lidx, ridx = lib.outer_join_indexer_int64(self, other)
+            join_index, lidx, ridx = lib.outer_join_indexer_int64(this_int64,
+                                                                  other_int64)
             join_index = Int64Index(join_index)
         else:  # pragma: no cover
             raise Exception('do not recognize join method %s' % how)
@@ -669,28 +699,103 @@ class Int64Index(Index):
             return Index.union(self.astype(object), other)
 
         if self.is_monotonic and other.is_monotonic:
-            result = lib.outer_join_indexer_int64(self, other)[0]
+            result = lib.outer_join_indexer_int64(_as_int64(self),
+                                                  _as_int64(other))[0]
         else:
             result = np.unique(np.concatenate((self, other)))
-        return Int64Index(result)
+        return type(self)(result)
     union.__doc__ = Index.union.__doc__
 
     def groupby(self, to_groupby):
-        return lib.groupby_int64(self, to_groupby)
+        return lib.groupby_int64(_as_int64(self), to_groupby)
 
     def map(self, mapper):
-        return lib.arrmap_int64(self, mapper)
+        return lib.arrmap_int64(_as_int64(self), mapper)
 
     def take(self, *args, **kwargs):
         """
         Analogous to ndarray.take
         """
         taken = self.values.take(*args, **kwargs)
-        return Int64Index(taken)
+        return type(self)(taken)
 
-class DateIndex(Index):
-    pass
 
+class DateTimeIndex(Int64Index):
+    """
+    NumPy datetime64-based index class
+    """
+    def __new__(cls, data, dtype=None, copy=False):
+        if not isinstance(data, np.ndarray):
+            if np.isscalar(data):
+                raise ValueError('Index(...) must be called with a collection '
+                                 'of some kind, %s was passed' % repr(data))
+
+            # other iterable of some kind
+            if not isinstance(data, (list, tuple)):
+                data = list(data)
+            data= np.asarray(data)
+
+        if issubclass(data.dtype.type, basestring):
+            raise TypeError('String dtype not supported, you may need '
+                            'to explicitly cast to int')
+        elif issubclass(data.dtype.type, np.integer):
+            subarr = np.array(data, dtype='M8[us]', copy=copy)
+        else:
+            subarr = np.array(data, dtype='M8[us]', copy=copy)
+            if len(data) > 0:
+                if (subarr != data).any():
+                    raise TypeError('Unsafe NumPy casting, you must explicitly '
+                                    'cast')
+
+        expected_dtype = np.dtype('M8[us]')
+        assert(subarr.dtype == expected_dtype)
+
+        return subarr.view(cls)
+
+    def __iter__(self):
+        # will I regret this?
+        for val in self.values:
+            yield val.astype('O')
+
+    def astype(self, dtype):
+        pass
+
+    @property
+    def dtype(self):
+        return self.values.dtype
+
+    def map(self, mapper):
+        try:
+            return lib.arrmap_int64(_as_int64(self), mapper)
+        except Exception:
+            pydates = self.view(np.ndarray).astype('O')
+            return lib.arrmap_object(pydates, mapper)
+
+    def year(self):
+        pass
+
+    def month(self):
+        pass
+
+    def day(self):
+        pass
+
+    def hour(self):
+        pass
+
+    def minute(self):
+        pass
+
+    def second(self):
+        pass
+
+    def weekday(self):
+        pass
+
+def _as_int64(index):
+    assert(issubclass(index.dtype.type, np.integer))
+    assert(index.dtype.itemsize == 8)
+    return np.asarray(index, dtype=np.int64)
 
 class Factor(np.ndarray):
     """

@@ -23,7 +23,6 @@ except:
 
 setuptools_kwargs = {}
 if sys.version_info[0] >= 3:
-
     setuptools_kwargs = {'use_2to3': True,
                        'zip_safe': False,
                        'install_requires': ['python-dateutil > 2','numpy'],

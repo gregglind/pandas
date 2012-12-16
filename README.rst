@@ -59,6 +59,10 @@ And via ``easy_install`` or ``pip``::
     easy_install pandas
     pip install pandas
 
+For the brave (or those wanting a more current version):
+
+     pip install -e git://github.com/pydata/pandas#egg=pandas-dev
+
 Dependencies
 ============
 
